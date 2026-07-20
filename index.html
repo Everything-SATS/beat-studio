@@ -118,13 +118,18 @@
   .step-cell.playhead { box-shadow: inset 0 0 0 2px #fff; }
 
   /* ---- Piano roll (synth) ---- */
-  .pianoroll-wrap { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; max-height: 60vh; }
-  .pr-keys { display: flex; flex-direction: column-reverse; background: var(--panel); flex-shrink: 0; }
+  /* Single shared scroll container for keys+grid -- they used to be separate scrollers
+     (.pr-keys fixed, .pr-grid-scroll independently scrollable), which let scrolling the grid
+     vertically desync it from the key labels since only one of them actually moved. Now both
+     scroll together as one; the keys column just stays visually pinned to the left edge via
+     position:sticky while horizontal scrolling happens. */
+  .pianoroll-wrap { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: 60vh; }
+  .pr-keys { display: flex; flex-direction: column-reverse; background: var(--panel); flex-shrink: 0;
+    position: sticky; left: 0; z-index: 2; }
   .pr-key { width: 56px; height: 20px; border-bottom: 1px solid var(--line); font-size: 0.6rem; display: flex;
     align-items: center; justify-content: flex-end; padding-right: 6px; color: var(--ink-soft); }
   .pr-key.white { background: var(--panel2); }
   .pr-key.black { background: var(--bg); }
-  .pr-grid-scroll { overflow-x: auto; flex: 1; }
   .pr-grid { display: flex; flex-direction: column-reverse; position: relative; width: max-content; }
   .pr-row { display: flex; height: 20px; border-bottom: 1px solid var(--line); }
   .pr-row.white { background: var(--panel2); }
@@ -255,7 +260,7 @@
         <div id="synthEditor" style="display:none;">
           <div class="pianoroll-wrap">
             <div class="pr-keys" id="prKeys"></div>
-            <div class="pr-grid-scroll"><div class="pr-grid" id="prGrid"></div></div>
+            <div class="pr-grid" id="prGrid"></div>
           </div>
           <div class="mini-keyboard" id="miniKeyboard"></div>
         </div>
@@ -1500,7 +1505,14 @@ function renderSaveModal() {
     const row = document.createElement("div");
     row.className = "slot-row";
     row.innerHTML = `<div><div class="s-name">${slot.data.name || "Untitled"}</div><div class="s-meta">${new Date(slot.savedAt).toLocaleString()}</div></div>
-      <div class="s-actions"><button class="top-btn" data-act="load">Load</button><button class="top-btn" data-act="del">Delete</button></div>`;
+      <div class="s-actions"><button class="top-btn" data-act="save">Save here</button><button class="top-btn" data-act="load">Load</button><button class="top-btn" data-act="del">Delete</button></div>`;
+    row.querySelector('[data-act="save"]').onclick = () => {
+      const updated = getSlots();
+      updated[i] = { savedAt: new Date().toISOString(), data: JSON.parse(JSON.stringify(project)) };
+      saveSlots(updated);
+      renderSaveModal();
+      showToast("Updated “" + (project.name || "Untitled") + "”");
+    };
     row.querySelector('[data-act="load"]').onclick = () => {
       project = JSON.parse(JSON.stringify(slot.data));
       afterProjectLoaded();
