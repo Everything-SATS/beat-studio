@@ -192,6 +192,11 @@
   .modal-actions { display: flex; gap: 8px; margin-top: 14px; }
   .modal-actions button { flex: 1; padding: 11px; border-radius: 10px; border: none; font-weight: 800; font-size: 0.85rem; }
   .modal-close-btn { background: var(--panel2); color: var(--ink); border: 1px solid var(--line) !important; }
+  .help-content h4 { margin: 16px 0 4px; font-size: 0.9rem; }
+  .help-content h4:first-child { margin-top: 0; }
+  .help-content p { margin: 0 0 4px; font-size: 0.85rem; line-height: 1.5; color: var(--ink-soft); }
+  .help-content b { color: var(--ink); }
+  .help-content code { background: var(--panel2); border-radius: 4px; padding: 1px 5px; font-size: 0.82rem; }
 
   .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--panel);
     border: 1px solid var(--line); color: var(--ink); padding: 10px 18px; border-radius: 999px; font-size: 0.82rem;
@@ -219,6 +224,7 @@
     <button id="modeSongBtn">Song</button>
   </div>
   <div class="spacer"></div>
+  <button class="top-btn" id="helpBtn">❓ How to use</button>
   <button class="top-btn" id="randomizeBtn">🎲 Randomize</button>
   <button class="top-btn" id="recordVocalBtn">🎤 Record Vocal</button>
   <button class="top-btn" id="saveBtn">💾 Save / Load</button>
@@ -288,6 +294,30 @@
     <input type="file" id="importJsonInput" accept="application/json" style="display:none;">
     <div class="modal-actions">
       <button class="modal-close-btn" id="closeSaveModalBtn" style="flex:1;">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="helpModal" hidden>
+  <div class="modal-box" style="max-width:520px;">
+    <h3>❓ How to make a track</h3>
+    <div class="help-content">
+      <h4>1. Build a beat</h4>
+      <p>Pick a track on the left (Kick, Snare, Hi-hats are already there) and tap squares in the <b>Pattern</b> tab to turn steps on/off. Every 4th square is marked — that's one beat. Hit <b>▶ Play</b> (or press Space) to hear it loop.</p>
+      <h4>2. Add a bassline or melody</h4>
+      <p>Select a synth track (or add one with the <b>+</b> button, choose "synth"). Its Pattern tab shows a piano roll instead of steps — click a cell to place a note (row = pitch, column = timing), click a placed note to delete it. Pick a preset first in the <b>Instrument</b> tab (Bass, Reese Bass, Acid Bass, Pad, Lead, etc.) — every knob under it is yours to tweak.</p>
+      <h4>3. Shape the sound</h4>
+      <p>The <b>Mixer / FX</b> tab has per-track volume, pan, EQ, distortion, chorus, delay, compressor and reverb send — plus master volume/compression/reverb at the bottom. Changes apply live while it's playing.</p>
+      <h4>4. Build more patterns, then merge them into a song</h4>
+      <p>One pattern is one loop (like a verse or a chorus). Click <b>+ New pattern</b> to start another — your tracks keep their instrument/mixer settings, but each pattern has its own beat/notes per track. Switch the <b>Pattern chips</b> at the top of the editor to jump between them.</p>
+      <p>Once a pattern's ready, tap <b>+ Add current pattern</b> in the song bar at the bottom — it appears as a chip in the arrangement strip. Repeat for every section (intro, verse, drop, outro...), in the order you want them to play. Switch the top-left toggle to <b>Song</b> mode and hit Play to hear the whole arrangement in sequence, not just one loop.</p>
+      <h4>5. Record a vocal (optional)</h4>
+      <p><b>🎤 Record Vocal</b> captures your mic, then lets you snap it to a key/scale with an adjustable strength — 100% gives a hard, obvious "auto-tuned" character; lower settings are subtler. "Add as track" drops it in, triggered from the start of whichever pattern is playing.</p>
+      <h4>6. Save and export</h4>
+      <p>Everything autosaves to this browser as you work. <b>💾 Save / Load</b> lets you keep named snapshots or export/import a full <code>.json</code> project file (for backup or moving devices). <b>⬇ Export WAV</b> renders the current pattern (or the whole song, in Song mode) to a real audio file you can download and share anywhere.</p>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-close-btn" id="closeHelpModalBtn" style="flex:1;">Got it</button>
     </div>
   </div>
 </div>
@@ -604,6 +634,16 @@ function triggerSynthNote(ctx, dest, instrument, params, midiNote, velocity, tim
       filter.frequency.linearRampToValueAtTime(baseCutoff + params.filterEnvAmount, time + attack);
       filter.frequency.linearRampToValueAtTime(baseCutoff, time + attack + decay);
     }
+    // Filter LFO ("wobble") -- a separate oscillator modulating filter.frequency continuously
+    // for the note's duration. Web Audio sums every signal connected to an AudioParam with its
+    // own automation curve, so this rides on top of the envelope/base cutoff above rather than
+    // overriding it.
+    if (params.lfoRate && params.lfoDepth) {
+      const filterLfo = ctx.createOscillator(); filterLfo.type = "sine"; filterLfo.frequency.value = params.lfoRate;
+      const filterLfoGain = ctx.createGain(); filterLfoGain.gain.value = params.lfoDepth;
+      filterLfo.connect(filterLfoGain); filterLfoGain.connect(filter.frequency);
+      filterLfo.start(time); filterLfo.stop(stopTime);
+    }
     const oscs = [];
     for (let i = 0; i < unison; i++) {
       const osc = ctx.createOscillator(); osc.type = waveform;
@@ -735,6 +775,13 @@ const DRUM_TYPES = [
 const SYNTH_ENGINES = [{ id: "subtractive", label: "Subtractive" }, { id: "fm", label: "FM (2-op)" }];
 const PRESETS = {
   bass: { engine: "subtractive", waveform: "sawtooth", subOsc: true, cutoff: 700, resonance: 2, attack: 0.004, decay: 0.12, sustain: 0.75, release: 0.15, unison: 1, detune: 0 },
+  subBass: { engine: "subtractive", waveform: "sine", subOsc: true, cutoff: 300, resonance: 0.2, attack: 0.006, decay: 0.15, sustain: 0.9, release: 0.2, unison: 1 },
+  reeseBass: { engine: "subtractive", waveform: "sawtooth", unison: 5, detune: 28, subOsc: true, cutoff: 1400, resonance: 1.5, attack: 0.01, decay: 0.2, sustain: 0.85, release: 0.25 },
+  acidBass: { engine: "subtractive", waveform: "sawtooth", unison: 1, cutoff: 500, resonance: 14, filterEnvAmount: 3200, attack: 0.002, decay: 0.18, sustain: 0.3, release: 0.1 },
+  fmBass: { engine: "fm", ratio: 1, index: 5, attack: 0.002, decay: 0.22, sustain: 0.5, release: 0.15 },
+  pluckBass: { engine: "subtractive", waveform: "triangle", subOsc: true, cutoff: 900, resonance: 2, filterEnvAmount: 1200, attack: 0.002, decay: 0.14, sustain: 0.1, release: 0.1, unison: 1 },
+  growlBass: { engine: "subtractive", waveform: "square", unison: 3, detune: 14, subOsc: true, cutoff: 900, resonance: 4, filterEnvAmount: 1500, attack: 0.005, decay: 0.15, sustain: 0.8, release: 0.2 },
+  wobbleBass: { engine: "subtractive", waveform: "sawtooth", unison: 2, detune: 10, subOsc: true, cutoff: 900, resonance: 3, attack: 0.005, decay: 0.1, sustain: 0.9, release: 0.15, lfoRate: 3, lfoDepth: 1400 },
   lead: { engine: "subtractive", waveform: "sawtooth", unison: 2, detune: 7, cutoff: 3500, resonance: 1, attack: 0.008, decay: 0.12, sustain: 0.8, release: 0.2 },
   pad: { engine: "subtractive", waveform: "sawtooth", unison: 3, detune: 11, cutoff: 2200, resonance: 0.4, attack: 0.6, decay: 0.4, sustain: 0.7, release: 1.3 },
   pluck: { engine: "subtractive", waveform: "triangle", cutoff: 3000, resonance: 1.2, filterEnvAmount: 2200, attack: 0.002, decay: 0.16, sustain: 0.0, release: 0.12, unison: 1 },
@@ -1203,7 +1250,7 @@ function renderInstrumentPanel() {
     Object.keys(PRESETS).forEach(key => {
       const chip = document.createElement("button");
       chip.className = "preset-chip";
-      chip.textContent = key[0].toUpperCase() + key.slice(1);
+      chip.textContent = (key[0].toUpperCase() + key.slice(1)).replace(/([A-Z])/g, " $1").trim();
       chip.onclick = () => {
         track.params = { ...PRESETS[key] };
         track.instrument = PRESETS[key].engine;
@@ -1251,6 +1298,12 @@ function renderInstrumentPanel() {
       filterCard.appendChild(knobRow("Resonance", 0, 15, 0.1, p.resonance ?? 0.6, v => v.toFixed(1), v => { p.resonance = v; autosave(); }));
       filterCard.appendChild(knobRow("Envelope amount", 0, 6000, 50, p.filterEnvAmount ?? 0, v => Math.round(v) + "Hz", v => { p.filterEnvAmount = v; autosave(); }));
       grid.appendChild(filterCard);
+
+      const lfoCard = document.createElement("div"); lfoCard.className = "knob-card";
+      lfoCard.innerHTML = `<h4>Filter LFO (wobble)</h4>`;
+      lfoCard.appendChild(knobRow("Rate", 0, 12, 0.1, p.lfoRate ?? 0, v => v.toFixed(1) + "Hz", v => { p.lfoRate = v; autosave(); }));
+      lfoCard.appendChild(knobRow("Depth", 0, 4000, 50, p.lfoDepth ?? 0, v => Math.round(v) + "Hz", v => { p.lfoDepth = v; autosave(); }));
+      grid.appendChild(lfoCard);
     }
   }
   wrap.appendChild(grid);
@@ -1597,6 +1650,8 @@ document.getElementById("addToSongBtn").addEventListener("click", () => {
 document.getElementById("randomizeBtn").addEventListener("click", randomizeCurrentPattern);
 document.getElementById("exportBtn").addEventListener("click", exportWav);
 
+document.getElementById("helpBtn").addEventListener("click", () => { document.getElementById("helpModal").hidden = false; });
+document.getElementById("closeHelpModalBtn").addEventListener("click", () => { document.getElementById("helpModal").hidden = true; });
 document.getElementById("saveBtn").addEventListener("click", () => { renderSaveModal(); document.getElementById("saveModal").hidden = false; });
 document.getElementById("closeSaveModalBtn").addEventListener("click", () => { document.getElementById("saveModal").hidden = true; });
 document.getElementById("saveNewSlotBtn").addEventListener("click", () => {
