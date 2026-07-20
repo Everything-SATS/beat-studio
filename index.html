@@ -220,6 +220,7 @@
   </div>
   <div class="spacer"></div>
   <button class="top-btn" id="randomizeBtn">🎲 Randomize</button>
+  <button class="top-btn" id="recordVocalBtn">🎤 Record Vocal</button>
   <button class="top-btn" id="saveBtn">💾 Save / Load</button>
   <button class="top-btn primary" id="exportBtn">⬇ Export WAV</button>
 </header>
@@ -287,6 +288,42 @@
     <input type="file" id="importJsonInput" accept="application/json" style="display:none;">
     <div class="modal-actions">
       <button class="modal-close-btn" id="closeSaveModalBtn" style="flex:1;">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="vocalModal" hidden>
+  <div class="modal-box">
+    <h3>🎤 Record Vocal</h3>
+    <div class="knob-row">
+      <button class="top-btn primary" id="vocalRecordBtn" style="flex:1;">● Record</button>
+      <button class="top-btn" id="vocalPlayBtn" style="flex:1;" disabled>▶ Play</button>
+    </div>
+    <div id="vocalStatus" style="font-size:0.78rem;color:var(--ink-soft);margin:6px 0 10px;text-align:center;">Grant microphone access, then record a phrase.</div>
+    <canvas id="vocalWaveform" width="380" height="70" style="width:100%;height:70px;background:var(--panel2);border-radius:8px;display:block;"></canvas>
+    <div class="knob-card" style="margin-top:12px;padding:12px 14px;">
+      <div class="knob-row"><label>Key</label>
+        <select id="vocalKeySelect"></select>
+      </div>
+      <div class="knob-row"><label>Scale</label>
+        <select id="vocalScaleSelect">
+          <option value="chromatic">Chromatic (light touch)</option>
+          <option value="major" selected>Major</option>
+          <option value="minor">Minor</option>
+          <option value="majorPentatonic">Major pentatonic</option>
+          <option value="minorPentatonic">Minor pentatonic</option>
+        </select>
+      </div>
+      <div class="knob-row">
+        <label>Correction strength</label>
+        <input type="range" id="vocalStrengthInput" min="0" max="100" value="80">
+        <span class="val" id="vocalStrengthVal">80%</span>
+      </div>
+    </div>
+    <button class="top-btn primary" id="vocalApplyBtn" style="width:100%;margin-top:10px;" disabled>🎚 Apply autotune</button>
+    <div class="modal-actions">
+      <button class="top-btn primary" id="vocalAddTrackBtn" style="flex:1;" disabled>Add as track</button>
+      <button class="modal-close-btn" id="closeVocalModalBtn" style="flex:1;">Close</button>
     </div>
   </div>
 </div>
@@ -586,6 +623,108 @@ function triggerSynthNote(ctx, dest, instrument, params, midiNote, velocity, tim
 }
 
 /* =========================================================================================
+   VOCAL RECORDING + ALGORITHMIC AUTOTUNE
+   Pitch detection (autocorrelation) runs as plain JS over the recorded buffer's samples --
+   no custom audio callback / AudioWorklet needed. Correction is applied via granular
+   resynthesis using ordinary AudioBufferSourceNodes (short overlapping grains, each played
+   back at a rate that nudges its detected pitch toward the nearest note in the chosen
+   key/scale, windowed with a linear fade so grains blend without clicks) rendered through an
+   OfflineAudioContext -- the same well-understood nodes used everywhere else in this app,
+   deliberately avoiding anything that can't be reasoned about without live audio testing.
+   ========================================================================================= */
+const SCALE_INTERVALS = {
+  chromatic: [0,1,2,3,4,5,6,7,8,9,10,11],
+  major: [0,2,4,5,7,9,11],
+  minor: [0,2,3,5,7,8,10],
+  majorPentatonic: [0,2,4,7,9],
+  minorPentatonic: [0,3,5,7,10],
+};
+const KEY_TO_SEMITONE = { C:0, "C#":1, D:2, "D#":3, E:4, F:5, "F#":6, G:7, "G#":8, A:9, "A#":10, B:11 };
+
+// Autocorrelation pitch detection on one windowed chunk of samples. Returns null for
+// silence/unclear pitch (RMS or correlation-confidence too low) rather than a noisy guess.
+function detectPitch(samples, sampleRate) {
+  const SIZE = samples.length;
+  let rms = 0;
+  for (let i = 0; i < SIZE; i++) rms += samples[i] * samples[i];
+  rms = Math.sqrt(rms / SIZE);
+  if (rms < 0.01) return null;
+
+  const minFreq = 70, maxFreq = 1000;
+  const minLag = Math.floor(sampleRate / maxFreq), maxLag = Math.floor(sampleRate / minFreq);
+  let bestLag = -1, bestCorr = 0;
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    let corr = 0;
+    for (let i = 0; i < SIZE - lag; i++) corr += samples[i] * samples[i + lag];
+    if (corr > bestCorr) { bestCorr = corr; bestLag = lag; }
+  }
+  if (bestLag <= 0) return null;
+  let energy = 0;
+  for (let i = 0; i < SIZE; i++) energy += samples[i] * samples[i];
+  if (bestCorr / (energy || 1) < 0.3) return null;
+  return sampleRate / bestLag;
+}
+
+// Nearest frequency belonging to the chosen key+scale, searching a window of nearby octaves
+// so pitches near an octave boundary still snap correctly.
+function nearestScaleFreq(freq, key, scaleName) {
+  const midi = 69 + 12 * Math.log2(freq / 440);
+  const rootOffset = KEY_TO_SEMITONE[key] ?? 0;
+  const intervals = SCALE_INTERVALS[scaleName] || SCALE_INTERVALS.chromatic;
+  const baseOctaveMidi = Math.floor(midi / 12) * 12;
+  let best = null, bestDist = Infinity;
+  for (let octaveShift = -1; octaveShift <= 1; octaveShift++) {
+    intervals.forEach(iv => {
+      const candidate = baseOctaveMidi + octaveShift * 12 + rootOffset + iv;
+      const d = Math.abs(candidate - midi);
+      if (d < bestDist) { bestDist = d; best = candidate; }
+    });
+  }
+  return 440 * Math.pow(2, (best - 69) / 12);
+}
+
+async function applyAutotune(sourceBuffer, key, scaleName, strength) {
+  const sr = sourceBuffer.sampleRate;
+  const data = sourceBuffer.getChannelData(0);
+  const windowSize = 1024, hop = 512;
+  const numWindows = Math.max(0, Math.floor((data.length - windowSize) / hop));
+  const pitches = [];
+  for (let w = 0; w < numWindows; w++) {
+    pitches.push(detectPitch(data.subarray(w * hop, w * hop + windowSize), sr));
+  }
+
+  const outCtx = new OfflineAudioContext(1, sourceBuffer.length + sr, sr);
+  const grainDuration = windowSize / sr;
+  for (let w = 0; w < numWindows; w++) {
+    const freq = pitches[w];
+    let rate = 1;
+    if (freq) {
+      const targetFreq = nearestScaleFreq(freq, key, scaleName);
+      const semitoneShift = 12 * Math.log2(targetFreq / freq);
+      rate = Math.pow(2, (semitoneShift * strength) / 12);
+    }
+    const src = outCtx.createBufferSource();
+    src.buffer = sourceBuffer;
+    src.playbackRate.value = rate;
+    const g = outCtx.createGain();
+    const t0 = (w * hop) / sr;
+    // Linear window: fades this grain in/out over its own span so overlapping grains
+    // crossfade smoothly instead of clicking at their boundaries.
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(1, t0 + grainDuration * 0.25);
+    g.gain.linearRampToValueAtTime(1, t0 + grainDuration * 0.75);
+    g.gain.linearRampToValueAtTime(0.0001, t0 + grainDuration);
+    src.connect(g); g.connect(outCtx.destination);
+    // start()'s offset is in the SOURCE buffer's own time; stop() is in OUTPUT/real time --
+    // using stop() rather than start()'s duration parameter sidesteps any ambiguity about
+    // whether that duration is scaled by playbackRate, since stop() always isn't.
+    src.start(t0, (w * hop) / sr);
+    src.stop(t0 + grainDuration);
+  }
+  return await outCtx.startRendering();
+}
+
+/* =========================================================================================
    PROJECT / DATA MODEL
    ========================================================================================= */
 const DRUM_TYPES = [
@@ -633,6 +772,17 @@ function makeSynthTrack(name, presetKey, color) {
   };
 }
 function makePattern(name, length) { return { id: uid("p"), name, length: length || 16 }; }
+// Vocal tracks hold a recorded (and optionally autotuned) audio clip rather than step/note
+// data -- vocalDataUrl is the persisted form (base64 WAV, survives save/export); the decoded,
+// ready-to-play AudioBuffer lives only at runtime in the `vocalBuffers` map (see below), never
+// re-decoded on every playback trigger.
+function makeVocalTrack(name, dataUrl, color) {
+  return {
+    id: uid("t"), name, type: "vocal", color,
+    volume: 0.9, pan: 0, muted: false, solo: false,
+    fx: defaultFx(), patternData: {}, vocalDataUrl: dataUrl,
+  };
+}
 
 function starterProject() {
   const patA = makePattern("A", 16);
@@ -911,7 +1061,11 @@ function renderPianoRoll(track, pattern, patData) {
     gridWrap.appendChild(rowEl);
   }
   (patData.notes || []).forEach(n => {
-    const rowIndex = PR_HIGH - n.pitch;
+    // Rows are appended to the DOM low-pitch-first (children[0] = PR_LOW), then flipped
+    // visually via CSS column-reverse -- so the DOM index matching a given pitch is
+    // pitch - PR_LOW, not PR_HIGH - pitch (that inverted formula was drawing every note
+    // mirrored vertically from the row actually clicked).
+    const rowIndex = n.pitch - PR_LOW;
     const rowEl = gridWrap.children[rowIndex];
     if (!rowEl) return;
     const note = document.createElement("div");
