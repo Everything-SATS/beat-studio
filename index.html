@@ -370,12 +370,18 @@ let audioCtx = null;
 let masterGain, masterComp, reverbConvolver, reverbReturnGain;
 let _noiseBuffer = null;
 
-function ensureAudioContext() {
+async function ensureAudioContext() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     setupMasterChain(audioCtx);
   }
-  if (audioCtx.state === "suspended") audioCtx.resume();
+  // AWAITING resume() matters specifically for play(): audioCtx.currentTime is frozen while
+  // suspended, so computing nextStepTime before resume() has actually completed can leave a
+  // real-world gap where the clock hasn't started moving yet -- once it does, the scheduler's
+  // lookahead window finds several steps' worth of time already notionally elapsed and fires
+  // them in a catch-up burst, which is what made playback look like it started a few steps in
+  // instead of at step 0.
+  if (audioCtx.state === "suspended") await audioCtx.resume();
   return audioCtx;
 }
 
@@ -869,6 +875,10 @@ let project = loadFromLocalStorage("beatstudio-autosave") || starterProject();
    RUNTIME STATE
    ========================================================================================= */
 let trackChains = {};
+// Decoded, ready-to-play AudioBuffers for vocal tracks (trackId -> AudioBuffer), populated on
+// "Add as track" and on project load from each track's persisted vocalDataUrl. Kept out of
+// `project` itself since AudioBuffers aren't JSON-serializable.
+let vocalBuffers = {};
 let selectedTrackId = project.tracks[0]?.id || null;
 let activePatternId = project.patterns[0]?.id || null;
 let editorTab = "pattern";
@@ -903,12 +913,26 @@ function anyTrackSoloed() { return project.tracks.some(t => t.solo); }
    ========================================================================================= */
 function stepDuration() { return 60 / project.bpm / 4; }
 
+function triggerVocalPlayback(ctx, dest, buffer, time) {
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.connect(dest);
+  src.start(time);
+}
+
 function scheduleStepForPattern(patternId, stepIndex, time) {
   project.tracks.forEach(track => {
     if (track.muted) return;
     if (anyTrackSoloed() && !track.solo) return;
     const chain = trackChains[track.id];
     if (!chain) return;
+    // Vocal tracks hold one continuous recorded clip, not per-step/note pattern data -- it
+    // retriggers from the top each time the pattern loops back to step 0, like a one-shot
+    // sample trigger.
+    if (track.type === "vocal") {
+      if (stepIndex === 0 && vocalBuffers[track.id]) triggerVocalPlayback(audioCtx, chain.input, vocalBuffers[track.id], time);
+      return;
+    }
     const patData = track.patternData[patternId];
     if (!patData) return;
     if (track.type === "drum") {
@@ -957,10 +981,13 @@ function ensureChainsForCurrentTracks() {
   const same = currentIds.length === chainIds.length && currentIds.every(id => trackChains[id]);
   if (!same) rebuildAllChains();
 }
-function play() {
-  ensureAudioContext();
-  ensureChainsForCurrentTracks();
+let playToken = 0;
+async function play() {
   if (isPlaying) return;
+  const myToken = ++playToken;
+  await ensureAudioContext();
+  if (myToken !== playToken) return; // stop() (or another play()) happened while we were awaiting resume
+  ensureChainsForCurrentTracks();
   isPlaying = true;
   currentStep = 0;
   songPosition = 0;
@@ -970,6 +997,7 @@ function play() {
   document.getElementById("playBtn").textContent = "❚❚";
 }
 function stop() {
+  playToken++; // invalidates any play() still awaiting audioCtx.resume()
   isPlaying = false;
   clearInterval(schedulerTimerId);
   document.getElementById("playBtn").classList.remove("playing");
@@ -1527,6 +1555,10 @@ async function exportWav() {
         if (track.muted) return;
         if (anyTrackSoloed() && !track.solo) return;
         const chain = oChains[track.id];
+        if (track.type === "vocal") {
+          if (s === 0 && vocalBuffers[track.id]) triggerVocalPlayback(offlineCtx, chain.input, vocalBuffers[track.id], t);
+          return;
+        }
         const patData = track.patternData[pid];
         if (!patData) return;
         if (track.type === "drum") {
