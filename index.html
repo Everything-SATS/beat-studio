@@ -260,6 +260,16 @@
           <div class="pattern-picker" id="patternPicker"></div>
           <button class="top-btn" id="addPatternBtn">+ New pattern</button>
           <button class="top-btn" id="clearPatternBtn">Clear track</button>
+          <div class="knob-row" style="margin:0;gap:6px;">
+            <label style="font-size:0.78rem;color:var(--ink-soft);font-weight:700;">Length</label>
+            <select id="patternLengthSelect">
+              <option value="4">1 beat (4)</option>
+              <option value="8">2 beats (8)</option>
+              <option value="16">4 beats (16)</option>
+              <option value="32">8 beats (32)</option>
+              <option value="64">16 beats (64)</option>
+            </select>
+          </div>
         </div>
         <div id="drumEditor"></div>
         <div id="synthEditor" style="display:none;">
@@ -1076,6 +1086,9 @@ function renderPatternEditor() {
   const track = getTrack(selectedTrackId);
   const drumEl = document.getElementById("drumEditor");
   const synthEl = document.getElementById("synthEditor");
+  const lengthSelect = document.getElementById("patternLengthSelect");
+  const activePattern = getActivePattern();
+  if (activePattern) lengthSelect.value = String(activePattern.length);
   if (!track) { drumEl.innerHTML = ""; synthEl.style.display = "none"; return; }
   if (track.type === "vocal") {
     synthEl.style.display = "none";
@@ -1902,6 +1915,15 @@ document.getElementById("clearPatternBtn").addEventListener("click", () => {
   if (!track) return;
   track.patternData[activePatternId] = track.type === "drum" ? { steps: stepsFrom([]) } : { notes: [] };
   renderPatternEditor(); autosave();
+});
+document.getElementById("patternLengthSelect").addEventListener("change", (e) => {
+  const pattern = getActivePattern();
+  if (!pattern) return;
+  // Drum step data is always pre-allocated to 64 slots (see stepsFrom()) and synth notes are
+  // just {step, ...} objects, so growing/shrinking length never destroys existing step/note
+  // data beyond the new boundary -- it just stops being shown/played until lengthened again.
+  pattern.length = parseInt(e.target.value);
+  renderAll(); autosave();
 });
 document.getElementById("addToSongBtn").addEventListener("click", () => {
   project.song.push(activePatternId);
