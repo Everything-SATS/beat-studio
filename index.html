@@ -988,6 +988,8 @@ async function play() {
   await ensureAudioContext();
   if (myToken !== playToken) return; // stop() (or another play()) happened while we were awaiting resume
   ensureChainsForCurrentTracks();
+  await ensureVocalBuffersDecoded();
+  if (myToken !== playToken) return;
   isPlaying = true;
   currentStep = 0;
   songPosition = 0;
@@ -1018,7 +1020,7 @@ function renderTrackList() {
       <div class="t-color" style="background:${track.color}"></div>
       <div class="t-info">
         <div class="t-name">${track.name}</div>
-        <div class="t-inst">${track.type === "drum" ? drumLabel(track.instrument) : (track.instrument === "fm" ? "FM" : "Subtractive")}</div>
+        <div class="t-inst">${track.type === "drum" ? drumLabel(track.instrument) : track.type === "vocal" ? "🎤 Recorded clip" : (track.instrument === "fm" ? "FM" : "Subtractive")}</div>
       </div>
       <div class="t-btns">
         <button class="t-btn mute ${track.muted ? "active" : ""}" title="Mute">M</button>
@@ -1065,6 +1067,14 @@ function renderPatternEditor() {
   const drumEl = document.getElementById("drumEditor");
   const synthEl = document.getElementById("synthEditor");
   if (!track) { drumEl.innerHTML = ""; synthEl.style.display = "none"; return; }
+  if (track.type === "vocal") {
+    synthEl.style.display = "none";
+    drumEl.style.display = "block";
+    drumEl.innerHTML = `<div style="text-align:center;color:var(--ink-soft);font-size:0.85rem;padding:30px 0;">
+      🎤 This is a recorded vocal clip, not a step/note pattern — it retriggers from the start
+      of whichever pattern is playing. Use <b>🎤 Record Vocal</b> in the header to re-record or add another.</div>`;
+    return;
+  }
   const pattern = getActivePattern();
   const patData = ensureTrackPatternData(track, pattern.id);
 
@@ -1247,6 +1257,12 @@ function renderInstrumentPanel() {
   const wrap = document.getElementById("instrumentPanel");
   wrap.innerHTML = "";
   if (!track) return;
+  if (track.type === "vocal") {
+    wrap.innerHTML = `<div class="knob-card"><h4>Recorded vocal</h4>
+      <div style="font-size:0.85rem;color:var(--ink-soft);">This track plays back a fixed recording — there's no synth engine to tune here.
+      Volume, pan, and effects are still available in the <b>Mixer / FX</b> tab. To change the take or its autotune settings, re-record via 🎤 in the header.</div></div>`;
+    return;
+  }
   const grid = document.createElement("div"); grid.className = "panel-grid";
 
   if (track.type === "drum") {
@@ -1441,8 +1457,22 @@ function autosave() {
   clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(() => saveToLocalStorage(AUTOSAVE_KEY, project), 400);
 }
+// Vocal recordings are stored as base64 WAV (uncompressed, ~1MB/10s) and can realistically blow
+// past localStorage's ~5-10MB quota. A naive save would then silently fail for the WHOLE
+// project, not just the vocal -- so on quota failure this retries once with vocal audio
+// stripped out (keeping everything else safe) and warns rather than losing data silently.
 function saveToLocalStorage(key, data) {
-  try { localStorage.setItem(key, JSON.stringify(data)); } catch (e) {}
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch (e) {
+    const stripped = JSON.parse(JSON.stringify(data));
+    let hadVocalData = false;
+    (stripped.tracks || []).forEach(t => { if (t.vocalDataUrl) { hadVocalData = true; t.vocalDataUrl = null; } });
+    try {
+      localStorage.setItem(key, JSON.stringify(stripped));
+      if (hadVocalData) showToast("Vocal audio too large to autosave — use Export .json to keep a full backup");
+    } catch (e2) { /* still too big even without vocal audio -- give up quietly */ }
+  }
 }
 function loadFromLocalStorage(key) {
   try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch (e) { return null; }
@@ -1483,15 +1513,28 @@ function renderSaveModal() {
     wrap.appendChild(row);
   });
 }
+// Decodes any vocal track's persisted vocalDataUrl back into a playable AudioBuffer, for
+// tracks not already resolved in the runtime-only `vocalBuffers` map (a track just created via
+// "Add as track" already has its entry set directly and is skipped here).
+async function ensureVocalBuffersDecoded() {
+  if (!audioCtx) return;
+  const pending = project.tracks.filter(t => t.type === "vocal" && t.vocalDataUrl && !vocalBuffers[t.id]);
+  for (const t of pending) {
+    try { vocalBuffers[t.id] = await dataUrlToAudioBuffer(audioCtx, t.vocalDataUrl); }
+    catch (e) { console.error("Failed to decode vocal track", t.id, e); }
+  }
+}
+
 function afterProjectLoaded() {
   selectedTrackId = project.tracks[0]?.id || null;
   activePatternId = project.patterns[0]?.id || null;
   songPosition = 0;
+  vocalBuffers = {};
   document.getElementById("projectName").value = project.name || "Untitled Beat";
   document.getElementById("bpmInput").value = project.bpm;
   document.getElementById("swingInput").value = project.swing;
   document.getElementById("swingVal").textContent = project.swing + "%";
-  if (audioCtx) { setupMasterChain(audioCtx); rebuildAllChains(); }
+  if (audioCtx) { setupMasterChain(audioCtx); rebuildAllChains(); ensureVocalBuffersDecoded(); }
   renderAll();
   autosave();
 }
@@ -1524,6 +1567,21 @@ function audioBufferToWavBlob(buffer) {
     }
   }
   return new Blob([bufferArr], { type: "audio/wav" });
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+async function audioBufferToDataUrl(buffer) { return blobToDataUrl(audioBufferToWavBlob(buffer)); }
+async function dataUrlToAudioBuffer(ctx, dataUrl) {
+  const resp = await fetch(dataUrl);
+  const arrayBuf = await resp.arrayBuffer();
+  return await ctx.decodeAudioData(arrayBuf);
 }
 
 async function exportWav() {
@@ -1620,6 +1678,159 @@ function randomizeCurrentPattern() {
   renderPatternEditor();
   autosave();
 }
+
+/* =========================================================================================
+   VOCAL RECORDING MODAL
+   ========================================================================================= */
+let vocalMediaRecorder = null, vocalMediaStream = null;
+let vocalChunks = [], vocalRawBuffer = null, vocalProcessedBuffer = null, vocalIsRecording = false;
+
+function drawVocalWaveform(buffer) {
+  const canvas = document.getElementById("vocalWaveform");
+  const c2d = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  const styles = getComputedStyle(document.documentElement);
+  c2d.fillStyle = styles.getPropertyValue("--panel2") || "#1A2030";
+  c2d.fillRect(0, 0, w, h);
+  if (!buffer) return;
+  const data = buffer.getChannelData(0);
+  const step = Math.max(1, Math.ceil(data.length / w));
+  c2d.strokeStyle = styles.getPropertyValue("--accent") || "#7C5CFF";
+  c2d.lineWidth = 1;
+  c2d.beginPath();
+  for (let x = 0; x < w; x++) {
+    let min = 1, max = -1;
+    for (let i = 0; i < step; i++) {
+      const idx = x * step + i;
+      if (idx >= data.length) break;
+      const v = data[idx];
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    const y1 = (1 - (max + 1) / 2) * h, y2 = (1 - (min + 1) / 2) * h;
+    c2d.moveTo(x, y1); c2d.lineTo(x, y2);
+  }
+  c2d.stroke();
+}
+
+function resetVocalModal() {
+  vocalRawBuffer = null; vocalProcessedBuffer = null; vocalChunks = [];
+  document.getElementById("vocalStatus").textContent = "Grant microphone access, then record a phrase.";
+  document.getElementById("vocalRecordBtn").textContent = "● Record";
+  document.getElementById("vocalPlayBtn").disabled = true;
+  document.getElementById("vocalApplyBtn").disabled = true;
+  document.getElementById("vocalAddTrackBtn").disabled = true;
+  drawVocalWaveform(null);
+}
+
+function populateVocalKeySelect() {
+  const sel = document.getElementById("vocalKeySelect");
+  if (sel.options.length) return;
+  Object.keys(KEY_TO_SEMITONE).forEach(k => {
+    const opt = document.createElement("option"); opt.value = k; opt.textContent = k;
+    if (k === "C") opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+document.getElementById("recordVocalBtn").addEventListener("click", () => {
+  populateVocalKeySelect();
+  resetVocalModal();
+  document.getElementById("vocalModal").hidden = false;
+});
+document.getElementById("closeVocalModalBtn").addEventListener("click", () => {
+  if (vocalIsRecording) stopVocalRecording();
+  document.getElementById("vocalModal").hidden = true;
+});
+
+async function startVocalRecording() {
+  try {
+    vocalMediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    document.getElementById("vocalStatus").textContent = "Microphone access denied or unavailable.";
+    return;
+  }
+  vocalChunks = [];
+  vocalMediaRecorder = new MediaRecorder(vocalMediaStream);
+  vocalMediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) vocalChunks.push(e.data); };
+  vocalMediaRecorder.onstop = async () => {
+    vocalMediaStream.getTracks().forEach(t => t.stop());
+    const blob = new Blob(vocalChunks, { type: vocalMediaRecorder.mimeType || "audio/webm" });
+    document.getElementById("vocalStatus").textContent = "Decoding…";
+    try {
+      const arrayBuf = await blob.arrayBuffer();
+      const ctx = await ensureAudioContext();
+      vocalRawBuffer = await ctx.decodeAudioData(arrayBuf);
+      vocalProcessedBuffer = vocalRawBuffer;
+      drawVocalWaveform(vocalRawBuffer);
+      document.getElementById("vocalStatus").textContent = `Recorded ${vocalRawBuffer.duration.toFixed(1)}s — preview, tweak the key/scale, then apply autotune.`;
+      document.getElementById("vocalPlayBtn").disabled = false;
+      document.getElementById("vocalApplyBtn").disabled = false;
+      document.getElementById("vocalAddTrackBtn").disabled = false;
+    } catch (e) {
+      document.getElementById("vocalStatus").textContent = "Couldn't decode the recording — try again.";
+    }
+  };
+  vocalMediaRecorder.start();
+  vocalIsRecording = true;
+  document.getElementById("vocalRecordBtn").textContent = "■ Stop";
+  document.getElementById("vocalStatus").textContent = "Recording… tap Stop when done.";
+}
+function stopVocalRecording() {
+  if (vocalMediaRecorder && vocalMediaRecorder.state !== "inactive") vocalMediaRecorder.stop();
+  vocalIsRecording = false;
+  document.getElementById("vocalRecordBtn").textContent = "● Record";
+}
+document.getElementById("vocalRecordBtn").addEventListener("click", () => {
+  if (vocalIsRecording) stopVocalRecording(); else startVocalRecording();
+});
+document.getElementById("vocalPlayBtn").addEventListener("click", async () => {
+  const buffer = vocalProcessedBuffer || vocalRawBuffer;
+  if (!buffer) return;
+  const ctx = await ensureAudioContext();
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.connect(ctx.destination);
+  src.start();
+});
+document.getElementById("vocalStrengthInput").addEventListener("input", (e) => {
+  document.getElementById("vocalStrengthVal").textContent = e.target.value + "%";
+});
+document.getElementById("vocalApplyBtn").addEventListener("click", () => {
+  if (!vocalRawBuffer) return;
+  document.getElementById("vocalStatus").textContent = "Processing autotune…";
+  document.getElementById("vocalApplyBtn").disabled = true;
+  // Deferred so the "Processing…" status actually paints before the (synchronous, CPU-bound)
+  // pitch-detection loop blocks the main thread for a moment.
+  setTimeout(async () => {
+    const key = document.getElementById("vocalKeySelect").value;
+    const scale = document.getElementById("vocalScaleSelect").value;
+    const strength = parseInt(document.getElementById("vocalStrengthInput").value) / 100;
+    try {
+      vocalProcessedBuffer = await applyAutotune(vocalRawBuffer, key, scale, strength);
+      drawVocalWaveform(vocalProcessedBuffer);
+      document.getElementById("vocalStatus").textContent = "Autotune applied ✓ — Play to preview, or add as a track.";
+    } catch (e) {
+      document.getElementById("vocalStatus").textContent = "Autotune processing failed — try again.";
+      console.error(e);
+    }
+    document.getElementById("vocalApplyBtn").disabled = false;
+  }, 10);
+});
+document.getElementById("vocalAddTrackBtn").addEventListener("click", async () => {
+  const buffer = vocalProcessedBuffer || vocalRawBuffer;
+  if (!buffer) return;
+  const dataUrl = await audioBufferToDataUrl(buffer);
+  const color = TRACK_COLORS[project.tracks.length % TRACK_COLORS.length];
+  const track = makeVocalTrack("Vocal " + (project.tracks.filter(t => t.type === "vocal").length + 1), dataUrl, color);
+  vocalBuffers[track.id] = buffer;
+  project.tracks.push(track);
+  selectedTrackId = track.id;
+  if (audioCtx) rebuildAllChains();
+  document.getElementById("vocalModal").hidden = true;
+  renderAll(); autosave();
+  showToast("Vocal track added ✓");
+});
 
 /* =========================================================================================
    EVENT WIRING
