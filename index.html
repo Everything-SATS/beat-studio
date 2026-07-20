@@ -123,7 +123,12 @@
      vertically desync it from the key labels since only one of them actually moved. Now both
      scroll together as one; the keys column just stays visually pinned to the left edge via
      position:sticky while horizontal scrolling happens. */
-  .pianoroll-wrap { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: 60vh; }
+  /* width:max-content hugs the actual keys+grid content (16-32 steps is typically far
+     narrower than the editor panel) instead of stretching to the panel's full width and
+     leaving a large empty area to the right -- capped by max-width so it still scrolls
+     rather than overflowing the page on longer patterns. */
+  .pianoroll-wrap { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: auto;
+    max-height: 60vh; width: max-content; max-width: 100%; }
   .pr-keys { display: flex; flex-direction: column-reverse; background: var(--panel); flex-shrink: 0;
     position: sticky; left: 0; z-index: 2; }
   .pr-key { width: 56px; height: 20px; border-bottom: 1px solid var(--line); font-size: 0.6rem; display: flex;
@@ -140,7 +145,7 @@
     box-shadow: 0 0 0 1px rgba(0,0,0,0.3); }
   .pr-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; pointer-events: none; z-index: 5; }
 
-  .mini-keyboard { display: flex; margin-top: 14px; height: 90px; position: relative; user-select: none; }
+  .mini-keyboard { display: flex; margin-top: 14px; height: 90px; position: relative; user-select: none; width: max-content; }
   .mk-white { width: 40px; height: 90px; background: #fff; border: 1px solid #999; border-radius: 0 0 6px 6px; flex-shrink: 0; }
   .mk-white:active { background: var(--accent2); }
   .mk-black { width: 26px; height: 56px; background: #191919; border-radius: 0 0 4px 4px; margin-left: -13px; margin-right: -13px; z-index: 2; }
