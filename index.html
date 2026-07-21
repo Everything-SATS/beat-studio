@@ -182,10 +182,21 @@
   .song-chip button { border: none; background: transparent; color: var(--ink-soft); font-weight: 900; padding: 0 2px; }
   .pattern-picker { display: flex; gap: 6px; flex-wrap: wrap; }
   .pattern-chip {
-    border: 1px solid var(--line); background: var(--panel2); color: var(--ink); padding: 7px 12px;
-    border-radius: 10px; font-size: 0.78rem; font-weight: 700;
+    display: flex; align-items: stretch; border: 1px solid var(--line); background: var(--panel2);
+    border-radius: 10px; overflow: hidden;
   }
-  .pattern-chip.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--panel2)); }
+  .pattern-chip.active { border-color: var(--accent); }
+  .pattern-chip.layered { box-shadow: 0 0 0 1px var(--accent2) inset; }
+  .pattern-chip-name {
+    border: none; background: transparent; color: var(--ink); padding: 7px 10px 7px 12px;
+    font-size: 0.78rem; font-weight: 700; cursor: pointer;
+  }
+  .pattern-chip.active .pattern-chip-name { color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--panel2)); }
+  .pattern-chip-layer {
+    border: none; border-left: 1px solid var(--line); background: transparent; color: var(--ink-soft);
+    padding: 7px 10px 7px 6px; font-size: 0.82rem; cursor: pointer;
+  }
+  .pattern-chip.layered .pattern-chip-layer { color: var(--accent2); }
 
   /* ---- Modal ---- */
   .modal-overlay { position: fixed; inset: 0; background: rgba(4,5,10,0.7); display: flex; align-items: center;
@@ -256,7 +267,7 @@
     <div class="editor-body">
       <div class="pane active" id="pane-pattern">
         <div class="step-toolbar">
-          <span id="patternPickerLabel" style="font-size:0.78rem;color:var(--ink-soft);font-weight:700;">Editing pattern:</span>
+          <span id="patternPickerLabel" style="font-size:0.78rem;color:var(--ink-soft);font-weight:700;">Editing pattern: <span style="opacity:0.75;font-weight:600;">(🔊 = plays together)</span></span>
           <div class="pattern-picker" id="patternPicker"></div>
           <button class="top-btn" id="addPatternBtn">+ New pattern</button>
           <button class="top-btn" id="clearPatternBtn">Clear track</button>
@@ -329,7 +340,7 @@
       <h4>3. Shape the sound</h4>
       <p>The <b>Mixer / FX</b> tab has per-track volume, pan, EQ, distortion, chorus, delay, compressor and reverb send — plus master volume/compression/reverb at the bottom. Changes apply live while it's playing.</p>
       <h4>4. Build more patterns, then merge them into a song</h4>
-      <p>One pattern is one loop (like a verse or a chorus). Click <b>+ New pattern</b> to start another — your tracks keep their instrument/mixer settings, but each pattern has its own beat/notes per track. Switch the <b>Pattern chips</b> at the top of the editor to jump between them.</p>
+      <p>One pattern is one loop (like a verse or a chorus). Click <b>+ New pattern</b> to start another — your tracks keep their instrument/mixer settings, but each pattern has its own beat/notes per track. Click a <b>Pattern chip's</b> name to edit it; click its <b>🔊/🔇</b> icon to add or drop it from the playback mix — every pattern with 🔊 lit plays together in a loop when you hit Play (great for layering, e.g. a drum pattern under a separate bassline pattern), even if they're different lengths.</p>
       <p>Once a pattern's ready, tap <b>+ Add current pattern</b> in the song bar at the bottom — it appears as a chip in the arrangement strip. Repeat for every section (intro, verse, drop, outro...), in the order you want them to play. Switch the top-left toggle to <b>Song</b> mode and hit Play to hear the whole arrangement in sequence, not just one loop.</p>
       <h4>5. Record a vocal (optional)</h4>
       <p><b>🎤 Record Vocal</b> captures your mic, then lets you snap it to a key/scale with an adjustable strength — 100% gives a hard, obvious "auto-tuned" character; lower settings are subtler. "Add as track" drops it in, triggered from the start of whichever pattern is playing.</p>
@@ -808,6 +819,9 @@ const PRESETS = {
   pluckBass: { engine: "subtractive", waveform: "triangle", subOsc: true, cutoff: 900, resonance: 2, filterEnvAmount: 1200, attack: 0.002, decay: 0.14, sustain: 0.1, release: 0.1, unison: 1 },
   growlBass: { engine: "subtractive", waveform: "square", unison: 3, detune: 14, subOsc: true, cutoff: 900, resonance: 4, filterEnvAmount: 1500, attack: 0.005, decay: 0.15, sustain: 0.8, release: 0.2 },
   wobbleBass: { engine: "subtractive", waveform: "sawtooth", unison: 2, detune: 10, subOsc: true, cutoff: 900, resonance: 3, attack: 0.005, decay: 0.1, sustain: 0.9, release: 0.15, lfoRate: 3, lfoDepth: 1400 },
+  deepSub: { engine: "subtractive", waveform: "sine", subOsc: true, cutoff: 180, resonance: 0.15, attack: 0.008, decay: 0.1, sustain: 0.95, release: 0.18, unison: 1 },
+  neuroBass: { engine: "subtractive", waveform: "square", unison: 4, detune: 35, subOsc: true, cutoff: 600, resonance: 6, filterEnvAmount: 2000, attack: 0.002, decay: 0.12, sustain: 0.75, release: 0.12 },
+  subReese: { engine: "subtractive", waveform: "sawtooth", unison: 6, detune: 22, subOsc: true, cutoff: 900, resonance: 2, attack: 0.008, decay: 0.2, sustain: 0.9, release: 0.3 },
   lead: { engine: "subtractive", waveform: "sawtooth", unison: 2, detune: 7, cutoff: 3500, resonance: 1, attack: 0.008, decay: 0.12, sustain: 0.8, release: 0.2 },
   pad: { engine: "subtractive", waveform: "sawtooth", unison: 3, detune: 11, cutoff: 2200, resonance: 0.4, attack: 0.6, decay: 0.4, sustain: 0.7, release: 1.3 },
   pluck: { engine: "subtractive", waveform: "triangle", cutoff: 3000, resonance: 1.2, filterEnvAmount: 2200, attack: 0.002, decay: 0.16, sustain: 0.0, release: 0.12, unison: 1 },
@@ -874,7 +888,7 @@ function starterProject() {
     name: "Untitled Beat", bpm: 120, swing: 0,
     masterVolume: 0.85, masterComp: { threshold: -12, ratio: 3 }, masterReverb: { size: 2.2, decay: 2.5, level: 0.25 },
     tracks: [tKick, tSnare, tHat, tBass],
-    patterns: [patA], song: [patA.id],
+    patterns: [patA], song: [patA.id], playbackLayers: [patA.id],
   };
 }
 function stepsFrom(activeIndices, velocity) {
@@ -904,8 +918,22 @@ let activePatternId = project.patterns[0]?.id || null;
 let editorTab = "pattern";
 let noteLength = 2;
 let isPlaying = false, songMode = false;
-let currentStep = 0, nextStepTime = 0, schedulerTimerId = null, songPosition = 0, playingPatternId = null;
+let nextStepTime = 0, schedulerTimerId = null, songPosition = 0, playingPatternId = null;
+// Each pattern currently in the playback mix (project.playbackLayers) advances its own step
+// index here, wrapping at its own length -- this is what lets differently-sized patterns
+// (e.g. a 16-step drum loop and a 12-step bass loop) overlay and play together as true layers
+// rather than only one pattern ever sounding at a time.
+let layerCursors = {};
 const SCHEDULE_AHEAD = 0.12, LOOKAHEAD_MS = 25;
+
+function ensurePlaybackLayers() {
+  if (!Array.isArray(project.playbackLayers)) project.playbackLayers = [];
+  project.playbackLayers = project.playbackLayers.filter(id => project.patterns.some(p => p.id === id));
+  if (project.playbackLayers.length === 0) {
+    const fallback = activePatternId || project.patterns[0]?.id;
+    project.playbackLayers = fallback ? [fallback] : [];
+  }
+}
 
 // Stops the chain's free-running chorus LFO and disconnects every node -- without this, a
 // chain rebuild (previously done on every single Play press) leaked an oscillator plus the
@@ -968,28 +996,42 @@ function scheduleStepForPattern(patternId, stepIndex, time) {
 }
 
 function scheduler() {
-  const pattern = songMode ? project.patterns.find(p => p.id === project.song[songPosition]) : getActivePattern();
-  if (!pattern) return;
-  playingPatternId = pattern.id;
+  // Song mode plays exactly one pattern per arrangement slot, same as before. Outside song
+  // mode, every pattern currently marked as a playback layer sounds together -- each keeps its
+  // own step cursor (layerCursors) so patterns of different lengths loop independently.
+  const layers = songMode
+    ? [project.patterns.find(p => p.id === project.song[songPosition])].filter(Boolean)
+    : project.playbackLayers.map(id => project.patterns.find(p => p.id === id)).filter(Boolean);
+  if (!layers.length) return;
   while (nextStepTime < audioCtx.currentTime + SCHEDULE_AHEAD) {
-    scheduleStepForPattern(pattern.id, currentStep, nextStepTime);
-    const uiStep = currentStep, uiTime = nextStepTime;
+    layers.forEach(pattern => {
+      if (layerCursors[pattern.id] === undefined) layerCursors[pattern.id] = 0;
+      scheduleStepForPattern(pattern.id, layerCursors[pattern.id], nextStepTime);
+    });
+    playingPatternId = layers[0].id;
+
+    // The step-grid playhead can only highlight one pattern's columns at a time -- show it for
+    // whichever layer is currently open in the editor, or hide it if that pattern isn't playing.
+    const uiPattern = layers.find(p => p.id === activePatternId);
+    const uiStep = uiPattern ? layerCursors[uiPattern.id] : -1;
+    const uiTime = nextStepTime;
     const delay = Math.max(0, (uiTime - audioCtx.currentTime) * 1000);
     setTimeout(() => renderPlayhead(uiStep), delay);
 
     let dur = stepDuration();
     if (project.swing > 0) {
-      if (currentStep % 2 === 1) dur *= (1 + project.swing / 100 * 0.6);
+      if (layerCursors[layers[0].id] % 2 === 1) dur *= (1 + project.swing / 100 * 0.6);
       else dur *= (1 - project.swing / 100 * 0.25);
     }
     nextStepTime += dur;
-    currentStep++;
-    if (currentStep >= pattern.length) {
-      currentStep = 0;
-      if (songMode) {
-        songPosition = (songPosition + 1) % project.song.length;
-        renderSongStrip();
-      }
+
+    layers.forEach(pattern => {
+      layerCursors[pattern.id]++;
+      if (layerCursors[pattern.id] >= pattern.length) layerCursors[pattern.id] = 0;
+    });
+    if (songMode && layerCursors[layers[0].id] === 0) {
+      songPosition = (songPosition + 1) % project.song.length;
+      renderSongStrip();
     }
   }
 }
@@ -1011,7 +1053,7 @@ async function play() {
   await ensureVocalBuffersDecoded();
   if (myToken !== playToken) return;
   isPlaying = true;
-  currentStep = 0;
+  layerCursors = {};
   songPosition = 0;
   nextStepTime = audioCtx.currentTime + 0.05;
   schedulerTimerId = setInterval(scheduler, LOOKAHEAD_MS);
@@ -1071,13 +1113,31 @@ function drumLabel(id) { return (DRUM_TYPES.find(d => d.id === id) || {}).label 
    RENDERING -- pattern editor (step grid / piano roll)
    ========================================================================================= */
 function renderPatternPicker() {
+  ensurePlaybackLayers();
   const wrap = document.getElementById("patternPicker");
   wrap.innerHTML = "";
   project.patterns.forEach(p => {
-    const chip = document.createElement("button");
-    chip.className = "pattern-chip" + (p.id === activePatternId ? " active" : "");
-    chip.textContent = p.name;
-    chip.onclick = () => { activePatternId = p.id; renderAll(); };
+    const layered = project.playbackLayers.includes(p.id);
+    const chip = document.createElement("div");
+    chip.className = "pattern-chip" + (p.id === activePatternId ? " active" : "") + (layered ? " layered" : "");
+    const nameBtn = document.createElement("button");
+    nameBtn.type = "button"; nameBtn.className = "pattern-chip-name"; nameBtn.textContent = p.name;
+    nameBtn.onclick = () => { activePatternId = p.id; renderAll(); };
+    const layerBtn = document.createElement("button");
+    layerBtn.type = "button"; layerBtn.className = "pattern-chip-layer";
+    layerBtn.title = layered ? "Playing together — click to drop from the mix" : "Add to the playback mix";
+    layerBtn.textContent = layered ? "🔊" : "🔇";
+    layerBtn.onclick = () => {
+      if (layered) {
+        // Never allow dropping the last remaining layer -- something must always be audible.
+        if (project.playbackLayers.length > 1) project.playbackLayers = project.playbackLayers.filter(id => id !== p.id);
+      } else {
+        project.playbackLayers.push(p.id);
+      }
+      autosave();
+      renderPatternPicker();
+    };
+    chip.appendChild(nameBtn); chip.appendChild(layerBtn);
     wrap.appendChild(chip);
   });
 }
@@ -1558,7 +1618,9 @@ async function ensureVocalBuffersDecoded() {
 function afterProjectLoaded() {
   selectedTrackId = project.tracks[0]?.id || null;
   activePatternId = project.patterns[0]?.id || null;
+  ensurePlaybackLayers();
   songPosition = 0;
+  layerCursors = {};
   vocalBuffers = {};
   document.getElementById("projectName").value = project.name || "Untitled Beat";
   document.getElementById("bpmInput").value = project.bpm;
@@ -1614,13 +1676,37 @@ async function dataUrlToAudioBuffer(ctx, dataUrl) {
   return await ctx.decodeAudioData(arrayBuf);
 }
 
+function gcdInt(a, b) { return b === 0 ? a : gcdInt(b, a % b); }
+function lcmInt(a, b) { return a / gcdInt(a, b) * b; }
+
 async function exportWav() {
   showToast("Rendering WAV…");
   const sr = 44100;
-  const sequence = songMode && project.song.length ? project.song : [activePatternId];
-  let totalSteps = 0;
-  sequence.forEach(pid => { const p = project.patterns.find(pp => pp.id === pid); if (p) totalSteps += p.length; });
-  const totalSeconds = Math.max(1, totalSteps * stepDuration() + 3);
+
+  // Song mode: render the arrangement's patterns one after another, exactly as before.
+  // Otherwise: render one full cycle of the current playback mix -- every layered pattern
+  // sounding together, exactly as you'd hear it live. Layers of different lengths are looped
+  // (from their own start) out to the LCM of all lengths, so the whole polyrhythm completes a
+  // full cycle before repeating; capped to keep unusual length combinations from exploding.
+  const songSequence = songMode && project.song.length ? project.song : null;
+  let steps; // [{ pid, localStep }] in playback order, one entry per absolute step
+  if (songSequence) {
+    steps = [];
+    songSequence.forEach(pid => {
+      const p = project.patterns.find(pp => pp.id === pid);
+      if (!p) return;
+      for (let s = 0; s < p.length; s++) steps.push([{ pid, localStep: s }]);
+    });
+  } else {
+    const layers = project.playbackLayers.map(id => project.patterns.find(p => p.id === id)).filter(Boolean);
+    const cycleSteps = Math.min(layers.reduce((acc, p) => lcmInt(acc, p.length), 1), 256);
+    steps = [];
+    for (let s = 0; s < cycleSteps; s++) {
+      steps.push(layers.map(p => ({ pid: p.id, localStep: s % p.length })));
+    }
+  }
+
+  const totalSeconds = Math.max(1, steps.length * stepDuration() + 3);
   const offlineCtx = new OfflineAudioContext(2, Math.ceil(sr * totalSeconds), sr);
 
   const oMasterGain = offlineCtx.createGain(); oMasterGain.gain.value = project.masterVolume;
@@ -1635,31 +1721,29 @@ async function exportWav() {
   project.tracks.forEach(track => { oChains[track.id] = buildTrackChain(offlineCtx, track, oMasterGain, oReverb); });
 
   let t = 0.05;
-  sequence.forEach(pid => {
-    const pattern = project.patterns.find(p => p.id === pid);
-    if (!pattern) return;
-    for (let s = 0; s < pattern.length; s++) {
+  steps.forEach(slotLayers => {
+    slotLayers.forEach(({ pid, localStep }) => {
       project.tracks.forEach(track => {
         if (track.muted) return;
         if (anyTrackSoloed() && !track.solo) return;
         const chain = oChains[track.id];
         if (track.type === "vocal") {
-          if (s === 0 && vocalBuffers[track.id]) triggerVocalPlayback(offlineCtx, chain.input, vocalBuffers[track.id], t);
+          if (localStep === 0 && vocalBuffers[track.id]) triggerVocalPlayback(offlineCtx, chain.input, vocalBuffers[track.id], t);
           return;
         }
         const patData = track.patternData[pid];
         if (!patData) return;
         if (track.type === "drum") {
-          const cell = patData.steps[s];
+          const cell = patData.steps[localStep];
           if (cell && cell.active) triggerDrum(offlineCtx, chain.input, track.instrument, t, cell.velocity ?? 0.9, track.params);
         } else {
-          (patData.notes || []).filter(n => n.step === s).forEach(n => {
+          (patData.notes || []).filter(n => n.step === localStep).forEach(n => {
             triggerSynthNote(offlineCtx, chain.input, track.instrument, track.params, n.pitch, n.velocity ?? 0.8, t, n.length * stepDuration());
           });
         }
       });
-      t += stepDuration();
-    }
+    });
+    t += stepDuration();
   });
 
   try {
@@ -1980,6 +2064,7 @@ document.getElementById("projectName").value = project.name || "Untitled Beat";
 document.getElementById("bpmInput").value = project.bpm;
 document.getElementById("swingInput").value = project.swing;
 document.getElementById("swingVal").textContent = project.swing + "%";
+ensurePlaybackLayers();
 renderAll();
 </script>
 </body>
